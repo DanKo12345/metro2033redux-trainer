@@ -19,8 +19,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Metro 2033 Redux Trainer")]
 [assembly: AssemblyProduct("Metro 2033 Redux Trainer")]
 [assembly: AssemblyCompany("dollza")]
-[assembly: AssemblyVersion("0.1.0.0")]
-[assembly: AssemblyFileVersion("0.1.0.0")]
+[assembly: AssemblyVersion("0.2.0.0")]
+[assembly: AssemblyFileVersion("0.2.0.0")]
 
 static class Native
 {
@@ -115,13 +115,24 @@ static class Catalog
     // cleared if an older version of the trainer left it on; god mode now covers the player only.
     public const int GodBit = 0x02, StealthBit = 0x04, AmmoBit = 0x08, ManagedBits = GodBit | StealthBit | AmmoBit;
 
-    // The order sets the hotkeys: the first feature is Ctrl+F1, the second Ctrl+F2 and so on.
+    // Military-grade ammo is also the money. The engine's ammo flag makes its count read 10999 and
+    // skips taking it away, which made the whole shop free. These two functions belong to the money
+    // only: the ammo feature masks the flag out of them, the money feature forces the free path.
+    // Each signature leaves the other feature's byte as a wildcard, so either can be on alone or both.
+    const string MoneyCountMaskSig = "41 57 48 83 EC 40 F6 05 ?? ?? ?? ?? 08 4C 8B F9 ?? ?? B8 F7 2A 00 00";
+    const string MoneyCountFreeSig = "41 57 48 83 EC 40 F6 05 ?? ?? ?? ?? ?? 4C 8B F9 74 0C B8 F7 2A 00 00";
+    const string MoneyTakeMaskSig = "33 FF F6 05 ?? ?? ?? ?? 08 ?? 68 3B FD 73";
+    const string MoneyTakeFreeSig = "33 FF F6 05 ?? ?? ?? ?? ?? 75 68 3B FD 73";
+
+    // The order is the index MainForm places the rows by.
     public static List<Feature> Build()
     {
         return new List<Feature>
         {
             new Feature { Key = "god", IsGod = true },
-            new Feature { Key = "ammo", Bit = AmmoBit },
+            new Feature { Key = "ammo", Bit = AmmoBit, Patches = new[] {
+                new Patch(MoneyCountMaskSig, 12, "00"),
+                new Patch(MoneyTakeMaskSig, 8, "00") } },
             new Feature { Key = "stealth", Bit = StealthBit },
             new Feature { Key = "medkits", Patches = new[] {
                 new Patch("B8 01 00 00 00 D3 E0 F7 D0 41 21 80 78 04 00 00 41 C7 80 84 04 00 00 FF 00 00 00 48 8B 0D ?? ?? ?? ?? 45 33 C0 33 D2", 9, "90 90 90 90 90 90 90") } },
@@ -142,6 +153,9 @@ static class Catalog
                 new Patch("48 8B 89 00 01 00 00 49 8B F8 48 85 C9 0F 84 ?? ?? ?? ?? 48 8B 01 FF 50 18 48 85 C0 0F 84 ?? ?? ?? ??", 13, "90 E9") } },
             new Feature { Key = "speed", IsSpeed = true },
             new Feature { Key = "noclip", IsNoClip = true },
+            new Feature { Key = "money", Patches = new[] {
+                new Patch(MoneyCountFreeSig, 16, "90 90"),
+                new Patch(MoneyTakeFreeSig, 9, "EB") } },
         };
     }
 }
@@ -220,7 +234,7 @@ class Game : IDisposable
             foreach (Feature f in features)
             {
                 f.Applied = false;
-                if (f.Bit != 0) f.Available = flagsOk;
+                if (f.Bit != 0) f.Available = flagsOk && ResolvePatches(f, image, textRva);
                 else if (f.IsSpeed) f.Available = speed >= 0;
                 else if (f.IsNoClip) { f.Available = hooksOk; f.Applied = moveHooked; }
                 else if (f.IsGod) { f.Available = hooksOk && flagsOk; f.Applied = godHooked; }
@@ -791,7 +805,7 @@ class MainForm : Form
     {
         { "god", 0x70 }, { "ammo", 0x71 }, { "stealth", 0x72 }, { "medkits", 0x73 },
         { "filters", 0x76 }, { "nomask", 0x77 }, { "noreload", 0x78 }, { "air", 0x79 }, { "noclip", 0x7A },
-        { "volt", 0x36 }, { "freeze", 0x37 }, { "speed", 0x38 },
+        { "volt", 0x36 }, { "freeze", 0x37 }, { "speed", 0x38 }, { "money", 0x39 },
         { SaveAction, 0x21 }, { TeleportAction, 0x22 },
     };
     const int NormalRetryTicks = 3, UnsupportedRetryTicks = 20;
@@ -838,9 +852,9 @@ class MainForm : Form
         AddCard("section.weapons", right, y, column, 266);
         AddCard("section.world", left, 362, 740, 176);
 
-        int[] survival = { 0, 2, 3, 4, 5 }, weapons = { 1, 6, 7, 8 };
+        int[] survival = { 0, 2, 3, 4, 5 }, weapons = { 1, 12, 6, 7, 8 };
         for (int i = 0; i < survival.Length; i++) Place(survival[i], left, y + title + i * 44, 44);
-        for (int i = 0; i < weapons.Length; i++) Place(weapons[i], right, y + title + i * 55, 55);
+        for (int i = 0; i < weapons.Length; i++) Place(weapons[i], right, y + title + i * 44, 44);
         Place(9, left, 362 + title, 44);
         Place(10, right, 362 + title, 44);
         Place(11, left, 362 + title + 44, 44);

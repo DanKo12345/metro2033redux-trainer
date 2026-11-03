@@ -16,14 +16,14 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle("Metro 2033 Redux Trainer Setup")]
 [assembly: AssemblyProduct("Metro 2033 Redux Trainer")]
 [assembly: AssemblyCompany("dollza")]
-[assembly: AssemblyVersion("0.1.0.0")]
-[assembly: AssemblyFileVersion("0.1.0.0")]
+[assembly: AssemblyVersion("0.2.0.0")]
+[assembly: AssemblyFileVersion("0.2.0.0")]
 
 class TrainerBusyException : Exception { }
 
 static class Installer
 {
-    public const string AppName = "Metro 2033 Redux Trainer", Version = "0.1", Author = "dollza";
+    public const string AppName = "Metro 2033 Redux Trainer", Version = "0.2", Author = "dollza";
     const string ExeName = "Metro2033ReduxTrainer.exe", UninstallName = "Uninstall.exe", Payload = "trainer.exe";
     const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Metro2033ReduxTrainer";
     const int TrainerCloseTimeoutMs = 5000;

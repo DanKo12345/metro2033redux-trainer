@@ -52,7 +52,7 @@ static class Loc
 
     static readonly Dictionary<string, string[]> Table = new Dictionary<string, string[]>
     {
-        { "subtitle", new[] { "Trainer version 0.1 by dollza", "Трейнер версия 0.1 by dollza", "Трейнер версія 0.1 by dollza", "修改器 版本 0.1 by dollza" } },
+        { "subtitle", new[] { "Trainer version 0.2 by dollza", "Трейнер версия 0.2 by dollza", "Трейнер версія 0.2 by dollza", "修改器 版本 0.2 by dollza" } },
         { "section.survival", new[] { "SURVIVAL", "ВЫЖИВАНИЕ", "ВИЖИВАННЯ", "生存" } },
         { "section.weapons", new[] { "WEAPONS", "ОРУЖИЕ", "ЗБРОЯ", "武器" } },
         { "section.world", new[] { "WORLD", "МИР", "СВІТ", "世界" } },
@@ -61,6 +61,8 @@ static class Loc
         { "god.sub", new[] { "Damage does not get through", "Урон не проходит", "Шкода не проходить", "不受任何伤害" } },
         { "ammo", new[] { "Ammo, grenades, knives", "Патроны, гранаты, ножи", "Набої, гранати, ножі", "弹药、手雷、飞刀" } },
         { "ammo.sub", new[] { "Supply does not decrease", "Запас не уменьшается", "Запас не зменшується", "数量不会减少" } },
+        { "money", new[] { "Infinite money", "Бесконечные деньги", "Безкінечні гроші", "无限金钱" } },
+        { "money.sub", new[] { "Purchases from traders are free", "Покупки у торговцев бесплатно", "Покупки в торговців безкоштовно", "向商人购买免费" } },
         { "stealth", new[] { "Invisibility", "Невидимость", "Невидимість", "隐身" } },
         { "stealth.sub", new[] { "Enemies do not notice you", "Враги не замечают игрока", "Вороги не помічають гравця", "敌人不会发现你" } },
         { "medkits", new[] { "Infinite medkits", "Бесконечные аптечки", "Безкінечні аптечки", "无限医疗包" } },
