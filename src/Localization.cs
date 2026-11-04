@@ -52,7 +52,7 @@ static class Loc
 
     static readonly Dictionary<string, string[]> Table = new Dictionary<string, string[]>
     {
-        { "subtitle", new[] { "Trainer version 0.2 by dollza", "Трейнер версия 0.2 by dollza", "Трейнер версія 0.2 by dollza", "修改器 版本 0.2 by dollza" } },
+        { "subtitle", new[] { "Trainer version 0.3 by dollza", "Трейнер версия 0.3 by dollza", "Трейнер версія 0.3 by dollza", "修改器 版本 0.3 by dollza" } },
         { "section.survival", new[] { "SURVIVAL", "ВЫЖИВАНИЕ", "ВИЖИВАННЯ", "生存" } },
         { "section.weapons", new[] { "WEAPONS", "ОРУЖИЕ", "ЗБРОЯ", "武器" } },
         { "section.world", new[] { "WORLD", "МИР", "СВІТ", "世界" } },
@@ -73,6 +73,8 @@ static class Loc
         { "nomask.sub", new[] { "Breathe freely on the surface", "Можно дышать на поверхности", "Можна дихати на поверхні", "可在地表自由呼吸" } },
         { "noreload", new[] { "No reload", "Без перезарядки", "Без перезаряджання", "无需换弹" } },
         { "noreload.sub", new[] { "Magazine stays full while firing", "Магазин не пустеет при стрельбе", "Магазин не порожніє під час стрільби", "射击时弹匣不会减少" } },
+        { "norecoil", new[] { "No recoil or spread", "Без отдачи и разброса", "Без віддачі й розкиду", "无后坐力和散布" } },
+        { "norecoil.sub", new[] { "Bullets go where you aim", "Пули летят точно в прицел", "Кулі летять точно в приціл", "子弹精准命中准星" } },
         { "air", new[] { "Air pressure", "Давление воздуха", "Тиск повітря", "气压" } },
         { "air.sub", new[] { "Pneumatic guns and flamethrower", "«Тихарь», «Хельсинг», огнемёт", "Пневматична зброя і вогнемет", "气动武器和火焰喷射器" } },
         { "volt", new[] { "Volt Driver charge", "Заряд Volt Driver", "Заряд Volt Driver", "Volt Driver 电量" } },

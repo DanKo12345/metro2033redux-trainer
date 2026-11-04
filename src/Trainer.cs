@@ -19,8 +19,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Metro 2033 Redux Trainer")]
 [assembly: AssemblyProduct("Metro 2033 Redux Trainer")]
 [assembly: AssemblyCompany("dollza")]
-[assembly: AssemblyVersion("0.2.0.0")]
-[assembly: AssemblyFileVersion("0.2.0.0")]
+[assembly: AssemblyVersion("0.3.0.0")]
+[assembly: AssemblyFileVersion("0.3.0.0")]
 
 static class Native
 {
@@ -62,11 +62,38 @@ class Patch
     }
 }
 
+enum HookCave { NoReload, NoSpread }
+
+// A jump from the game's code into a cave of the trainer's. As with a patch, the signature holds the
+// original bytes, and a jump left by a trainer that was killed is recognised so it can be undone.
+class CodeHook
+{
+    public readonly int[] Signature, HookedSignature;
+    public readonly int Offset, Length;
+    public readonly byte[] Original;
+    public readonly HookCave Cave;
+    public long Rva = -1;
+    public bool Hooked;
+
+    public CodeHook(string signature, int offset, int length, HookCave cave)
+    {
+        Signature = Sig.Parse(signature);
+        Offset = offset;
+        Length = length;
+        Cave = cave;
+        Original = Signature.Skip(offset).Take(length).Select(x => (byte)x).ToArray();
+        HookedSignature = (int[])Signature.Clone();
+        HookedSignature[offset] = 0xE9;
+        for (int i = 1; i < length; i++) HookedSignature[offset + i] = i < 5 ? -1 : 0x90;
+    }
+}
+
 class Feature
 {
     public string Key;
     public int Bit;
     public Patch[] Patches = new Patch[0];
+    public CodeHook[] Hooks = new CodeHook[0];
     public bool IsSpeed, IsNoClip, IsGod;
     public bool On, Applied, Available;
     public ToggleRow Row;
@@ -124,6 +151,12 @@ static class Catalog
     const string MoneyTakeMaskSig = "33 FF F6 05 ?? ?? ?? ?? 08 ?? 68 3B FD 73";
     const string MoneyTakeFreeSig = "33 FF F6 05 ?? ?? ?? ?? ?? 75 68 3B FD 73";
 
+    // Both sit in the shared shot routine, which has the weapon in r14. After a shot it stores the
+    // rounds minus the rounds fired (sub edi, r13d); before the bullets it keeps the weapon's
+    // current spread for all of them (movaps xmm14, xmm0).
+    const string NoReloadSig = "49 8B 06 41 2B FD 8B D7 49 8B CE FF 90 60 13 00 00";
+    const string NoSpreadSig = "49 8B 04 24 49 8B CC 44 0F 28 F0 45 0F 57 FF FF 90 08 01 00 00 66 44 0F 6F 25";
+
     // The order is the index MainForm places the rows by.
     public static List<Feature> Build()
     {
@@ -142,7 +175,11 @@ static class Catalog
                 new Patch("0F 5B C0 F3 0F 5C C6 F3 0F 5D D0 F3 0F 5C CA F3 0F 58 D6 F3 0F 11 8E 80 06 00 00 F3 0F 11 93 54 04 00 00 F3 0F 11 93 4C 04 00 00", 11, "90 90 90 90") } },
             new Feature { Key = "nomask", Patches = new[] {
                 new Patch("CC 8B 05 ?? ?? ?? ?? A8 01 75 07 A8 02 75 03 33 C0 C3", 9, "EB") } },
-            new Feature { Key = "noreload", Patches = new[] {
+            // Firearms take their rounds out in one shared shot routine, which is hooked into a cave
+            // that skips it for the player's weapon. The patch covers a separate single-round path.
+            new Feature { Key = "noreload",
+                Hooks = new[] { new CodeHook(NoReloadSig, 0, 6, HookCave.NoReload) },
+                Patches = new[] {
                 new Patch("48 8B CF FF 93 ?? ?? ?? ?? 48 8B CF 8D 50 FF FF 93 ?? ?? ?? ?? C6 87 10 0C 00 00 01 48 83 BF B8 05 00 00 00 75 32", 14, "00") } },
             new Feature { Key = "air", Patches = new[] {
                 new Patch("C3 F3 0F 10 8B 00 0C 00 00 0F 57 C0 F3 0F 5C CE 0F 2F C8 F3 0F 11 8B 00 0C 00 00 73 1A C7 83 00 0C 00 00 00 00 00 00", 12, "90 90 90 90"),
@@ -156,6 +193,13 @@ static class Catalog
             new Feature { Key = "money", Patches = new[] {
                 new Patch(MoneyCountFreeSig, 16, "90 90"),
                 new Patch(MoneyTakeFreeSig, 9, "EB") } },
+            // Each shot plays a camera track whose strength starts from a 1.0 constant and is scaled by
+            // weapon upgrades. Starting it from zero (xorps xmm6, xmm6) leaves the camera still. The
+            // hook gives the player's bullets no spread, so they go where the crosshair points.
+            new Feature { Key = "norecoil",
+                Hooks = new[] { new CodeHook(NoSpreadSig, 7, 8, HookCave.NoSpread) },
+                Patches = new[] {
+                new Patch("33 ED 0F 29 74 24 50 8B F5 F3 0F 10 35 72 66 BC 00 0F 29 7C 24 40 0F 57 FF", 9, "0F 57 F6 0F 1F 44 00 00") } },
         };
     }
 }
@@ -179,10 +223,12 @@ class Game : IDisposable
     // answers "immune" for the player and leaves everyone else to the game.
     const string GodCheckSig = "48 83 EC 28 F6 05 ?? ?? ?? ?? 02 74 ?? 85 D2 74 ?? 48 8D 0D";
     const string GodCheckHookedSig = "E9 ?? ?? ?? ?? 90 90 90 90 90 90 74 ?? 85 D2 74 ?? 48 8D 0D";
+    // The game object; [game+0x38] is the player, whose weapons link to player+0xA0 through [weapon+0x118].
+    const string GameSig = "48 8B 05 ?? ?? ?? ?? 48 8B 48 38 48 85 C9 4C 8D 81 A0 00 00 00";
     const int NoClipCallOffset = 30, GodCheckLength = 11;
     const int CaveSize = 0x1000, CaveEnabled = 0, CaveSpeed = 4, CaveVertical = 8, CaveController = 0x10, CavePlayer = 0x18, CaveGodEnabled = 0x20;
     const int CaveTeleport = 0x24, CaveTarget = 0x28, FootOffset = 0x1A8;
-    const int CaveCodeOffset = 0x40, CaveGodOffset = 0x200;
+    const int CaveCodeOffset = 0x40, CaveGodOffset = 0x200, CaveNoReloadOffset = 0x300, CaveNoSpreadOffset = 0x380;
     const long NearestCave = 0x100000, FarthestCave = 0x70000000, CaveStep = 0x10000;
     const float NoClipSpeedScale = 2f, NoClipVerticalSpeed = 6f, NoClipBoost = 3f;
     const int VK_SHIFT = 0x10, VK_CONTROL = 0x11, VK_SPACE = 0x20;
@@ -191,6 +237,7 @@ class Game : IDisposable
     IntPtr handle;
     Process process;
     long moduleBase, flagsRva = -1, speedRva = -1, noClipSiteRva = -1, moveRva = -1, godCheckRva = -1, godFlagsRva = -1, caveAddress;
+    long gameRva = -1;
     bool moveHooked, godHooked;
     // Position save and teleport run through the move cave, so they hook it until they are done.
     bool savePending, saveArmed, teleportPending, teleportArmed, hasSaved;
@@ -227,6 +274,7 @@ class Game : IDisposable
             long ammo = Sig.FindGlobal(image, textRva, FlagAmmoSig, 2, 7);
             long speed = Sig.FindGlobal(image, textRva, SpeedSig, 4, 8);
             bool hooksOk = ResolveHooks(image, textRva);
+            gameRva = Sig.FindGlobal(image, textRva, GameSig, 3, 7);
             // Two independent reads of the flag word must agree, unless the god check is already hooked.
             bool flagsOk = ammo >= 0 && (godFlagsRva < 0 || godFlagsRva == ammo);
 
@@ -239,6 +287,7 @@ class Game : IDisposable
                 else if (f.IsNoClip) { f.Available = hooksOk; f.Applied = moveHooked; }
                 else if (f.IsGod) { f.Available = hooksOk && flagsOk; f.Applied = godHooked; }
                 else f.Available = ResolvePatches(f, image, textRva);
+                if (f.Hooks.Length > 0) f.Available &= gameRva >= 0 && ResolveCodeHooks(f, image, textRva);
                 if (f.Available) resolved++;
             }
             // Steam decrypts the code a moment after launch, so a miss may only mean "too early".
@@ -295,6 +344,19 @@ class Game : IDisposable
         int check = godHooked ? hooked[0] : checks[0];
         godCheckRva = textRva + check;
         if (!godHooked) godFlagsRva = godCheckRva + 4 + 7 + BitConverter.ToInt32(image, check + 6);
+        return true;
+    }
+
+    static bool ResolveCodeHooks(Feature f, byte[] image, int textRva)
+    {
+        foreach (CodeHook hook in f.Hooks)
+        {
+            List<int> sites = Sig.FindAll(image, hook.Signature), hooked = Sig.FindAll(image, hook.HookedSignature);
+            if (sites.Count + hooked.Count != 1) return false;
+            hook.Hooked = hooked.Count == 1;
+            hook.Rva = textRva + (hook.Hooked ? hooked[0] : sites[0]) + hook.Offset;
+            f.Applied |= hook.Hooked;
+        }
         return true;
     }
 
@@ -473,6 +535,62 @@ class Game : IDisposable
         return a.Bytes.ToArray();
     }
 
+    // Tests whether the weapon in r14 belongs to the player, using rax and rdx. Falls through when it
+    // does not and returns the jump that is taken when it does.
+    int EmitPlayerWeaponJump(Asm a)
+    {
+        a.Rip("48 8B 05", moduleBase + gameRva, 0);                // mov rax, [game]
+        a.Hex("48 85 C0"); int noGame = a.JumpFrom("0F 84");       // test rax, rax; je other
+        a.Hex("48 8B 40 38 48 85 C0"); int noPlayer = a.JumpFrom("0F 84"); // rax = player; je other
+        a.Hex("49 8B 96 18 01 00 00");                             // mov rdx, [r14+0x118]
+        a.Hex("48 85 D2"); int noOwner = a.JumpFrom("0F 84");      // test rdx, rdx; je other
+        a.Hex("48 05 A0 00 00 00 48 3B 02"); int player = a.JumpFrom("0F 84"); // cmp player+0xA0, [rdx]; je player
+        a.Land(noGame); a.Land(noPlayer); a.Land(noOwner);         // other:
+        return player;
+    }
+
+    int CaveOffset(HookCave cave) { return cave == HookCave.NoReload ? CaveNoReloadOffset : CaveNoSpreadOffset; }
+
+    // No reload: rounds in edi, rounds fired in r13d. The player's weapon keeps edi.
+    // No spread: the weapon's spread in xmm0, kept in xmm14 for the bullets. The player's weapon gets
+    // zero. rax holds the vtable the next instruction calls through, so it is saved.
+    byte[] BuildHookCave(CodeHook hook, long cave)
+    {
+        Asm a = new Asm(cave + CaveOffset(hook.Cave));
+        if (hook.Cave == HookCave.NoReload)
+        {
+            int player = EmitPlayerWeaponJump(a);
+            a.Hex("41 2B FD");                                     // sub edi, r13d
+            a.Land(player);
+            a.Hex("49 8B 06");                                     // mov rax, [r14]
+        }
+        else
+        {
+            a.Hex("50 52");                                        // push rax; push rdx
+            int player = EmitPlayerWeaponJump(a);
+            a.Hex("44 0F 28 F0"); int done = a.JumpFrom("E9");     // movaps xmm14, xmm0; jmp done
+            a.Land(player);
+            a.Hex("45 0F 57 F6");                                  // xorps xmm14, xmm14
+            a.Land(done);
+            a.Hex("5A 58 45 0F 57 FF");                            // pop rdx; pop rax; xorps xmm15, xmm15
+        }
+        a.Rip("E9", moduleBase + hook.Rva + hook.Length, 0);       // jmp back
+        return a.Bytes.ToArray();
+    }
+
+    void SetCodeHooks(Feature f, bool on)
+    {
+        if (on && caveAddress == 0) CreateCave();
+        foreach (CodeHook hook in f.Hooks)
+        {
+            if (!on) { WriteHook(hook.Rva, hook.Original); continue; }
+            List<byte> jump = new List<byte> { 0xE9 };
+            jump.AddRange(BitConverter.GetBytes((int)(caveAddress + CaveOffset(hook.Cave) - (moduleBase + hook.Rva + 5))));
+            jump.AddRange(Enumerable.Repeat((byte)0x90, hook.Length - 5));
+            WriteHook(hook.Rva, jump.ToArray());
+        }
+    }
+
     byte[] GodCheckOriginal()
     {
         List<byte> b = new List<byte> { 0x48, 0x83, 0xEC, 0x28, 0xF6, 0x05 };
@@ -488,6 +606,8 @@ class Game : IDisposable
         WriteAbsolute(cave + CaveSpeed, BitConverter.GetBytes(NoClipSpeedScale));
         WriteAbsolute(cave + CaveCodeOffset, BuildMoveCave(cave));
         WriteAbsolute(cave + CaveGodOffset, BuildGodCave(cave));
+        foreach (CodeHook hook in features.SelectMany(f => f.Hooks).Where(h => h.Rva >= 0))
+            WriteAbsolute(cave + CaveOffset(hook.Cave), BuildHookCave(hook, cave));
         Native.FlushInstructionCache(handle, new IntPtr(cave), new IntPtr(CaveSize));
     }
 
@@ -593,6 +713,7 @@ class Game : IDisposable
     }
 
     public bool GodHooked { get { return Read(godCheckRva, 1)[0] == 0xE9; } }
+    public bool IsHooked(CodeHook hook) { return Read(hook.Rva, 1)[0] == 0xE9; }
     public bool HasSavedPosition { get { return hasSaved; } }
 
     public bool RequestSavePosition()
@@ -670,7 +791,11 @@ class Game : IDisposable
                 float target = f.On ? (float)(speedDefault * SpeedMultiplier) : speedDefault;
                 if (ReadFloat(speedRva) != target) Write(speedRva, BitConverter.GetBytes(target));
             }
-            else if (f.Patches.Length > 0 && f.On != f.Applied) SetPatches(f, f.On);
+            else if ((f.Patches.Length > 0 || f.Hooks.Length > 0) && f.On != f.Applied)
+            {
+                SetCodeHooks(f, f.On);
+                SetPatches(f, f.On);
+            }
         }
         SyncHooks();
     }
@@ -681,7 +806,7 @@ class Game : IDisposable
         handle = IntPtr.Zero;
         process = null;
         moduleBase = caveAddress = 0;
-        flagsRva = speedRva = noClipSiteRva = moveRva = godCheckRva = godFlagsRva = -1;
+        flagsRva = speedRva = noClipSiteRva = moveRva = godCheckRva = godFlagsRva = gameRva = -1;
         moveHooked = godHooked = false;
         savePending = saveArmed = teleportPending = teleportArmed = hasSaved = false;
         foreach (Feature f in features) f.Applied = false;
@@ -805,7 +930,7 @@ class MainForm : Form
     {
         { "god", 0x70 }, { "ammo", 0x71 }, { "stealth", 0x72 }, { "medkits", 0x73 },
         { "filters", 0x76 }, { "nomask", 0x77 }, { "noreload", 0x78 }, { "air", 0x79 }, { "noclip", 0x7A },
-        { "volt", 0x36 }, { "freeze", 0x37 }, { "speed", 0x38 }, { "money", 0x39 },
+        { "volt", 0x36 }, { "freeze", 0x37 }, { "speed", 0x38 }, { "money", 0x39 }, { "norecoil", 0x30 },
         { SaveAction, 0x21 }, { TeleportAction, 0x22 },
     };
     const int NormalRetryTicks = 3, UnsupportedRetryTicks = 20;
@@ -843,36 +968,36 @@ class MainForm : Form
         MaximizeBox = false;
         DoubleBuffered = true;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(Theme.S(780), Theme.S(616));
+        ClientSize = new Size(Theme.S(780), Theme.S(660));
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
         catch (Exception) { }
 
-        int left = 20, right = 398, column = 362, y = 84, title = 34;
-        AddCard("section.survival", left, y, column, 266);
-        AddCard("section.weapons", right, y, column, 266);
-        AddCard("section.world", left, 362, 740, 176);
+        int left = 20, right = 398, column = 362, y = 84, title = 34, world = 406;
+        AddCard("section.survival", left, y, column, 310);
+        AddCard("section.weapons", right, y, column, 310);
+        AddCard("section.world", left, world, 740, 176);
 
-        int[] survival = { 0, 2, 3, 4, 5 }, weapons = { 1, 12, 6, 7, 8 };
+        int[] survival = { 0, 2, 3, 4, 5 }, weapons = { 1, 12, 6, 13, 7, 8 };
         for (int i = 0; i < survival.Length; i++) Place(survival[i], left, y + title + i * 44, 44);
         for (int i = 0; i < weapons.Length; i++) Place(weapons[i], right, y + title + i * 44, 44);
-        Place(9, left, 362 + title, 44);
-        Place(10, right, 362 + title, 44);
-        Place(11, left, 362 + title + 44, 44);
+        Place(9, left, world + title, 44);
+        Place(10, right, world + title, 44);
+        Place(11, left, world + title + 44, 44);
 
-        slider.SetBounds(Theme.S(right + 6), Theme.S(362 + title + 46), Theme.S(column - 12), Theme.S(34));
+        slider.SetBounds(Theme.S(right + 6), Theme.S(world + title + 46), Theme.S(column - 12), Theme.S(34));
         slider.ValueChanged += delegate { game.SpeedMultiplier = slider.Value; SyncGame(); };
         Controls.Add(slider);
 
-        saveRow.SetBounds(Theme.S(left + 6), Theme.S(362 + title + 88), Theme.S(350), Theme.S(44));
+        saveRow.SetBounds(Theme.S(left + 6), Theme.S(world + title + 88), Theme.S(350), Theme.S(44));
         saveRow.Activated += delegate { SavePosition(); };
         saveRow.HotkeyClicked += delegate { StartCapture(SaveAction); };
-        teleportRow.SetBounds(Theme.S(right + 6), Theme.S(362 + title + 88), Theme.S(350), Theme.S(44));
+        teleportRow.SetBounds(Theme.S(right + 6), Theme.S(world + title + 88), Theme.S(350), Theme.S(44));
         teleportRow.Activated += delegate { TeleportBack(); };
         teleportRow.HotkeyClicked += delegate { StartCapture(TeleportAction); };
         Controls.Add(saveRow);
         Controls.Add(teleportRow);
 
-        topRow.SetBounds(Theme.S(130), Theme.S(548), Theme.S(170), Theme.S(32));
+        topRow.SetBounds(Theme.S(130), Theme.S(592), Theme.S(170), Theme.S(32));
         topRow.BackColor = Theme.Back;
         topRow.On = Preferences.Read("TopMost") == "1";
         topRow.SnapAnimation();
@@ -885,7 +1010,7 @@ class MainForm : Form
         };
         Controls.Add(topRow);
 
-        soundRow.SetBounds(Theme.S(20), Theme.S(548), Theme.S(100), Theme.S(32));
+        soundRow.SetBounds(Theme.S(20), Theme.S(592), Theme.S(100), Theme.S(32));
         soundRow.BackColor = Theme.Back;
         soundRow.On = Preferences.Read("Sound") != "0";
         soundRow.SnapAnimation();
@@ -898,7 +1023,7 @@ class MainForm : Form
         };
         Controls.Add(soundRow);
 
-        disableAll.SetBounds(Theme.S(310), Theme.S(548), Theme.S(450), Theme.S(32));
+        disableAll.SetBounds(Theme.S(310), Theme.S(592), Theme.S(450), Theme.S(32));
         disableAll.Click += delegate { DisableAll(); };
         Controls.Add(disableAll);
 
@@ -1208,7 +1333,7 @@ class MainForm : Form
         }
 
         Size hintSize = TextRenderer.MeasureText(Loc.T("hint"), Theme.SubFont, Size.Empty, TextFormatFlags.NoPadding);
-        TextRenderer.DrawText(g, Loc.T("hint"), Theme.SubFont, new Point(Theme.S(20), Theme.S(590)), Theme.Faint, Theme.Back, TextFormatFlags.NoPadding);
+        TextRenderer.DrawText(g, Loc.T("hint"), Theme.SubFont, new Point(Theme.S(20), Theme.S(634)), Theme.Faint, Theme.Back, TextFormatFlags.NoPadding);
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -1302,14 +1427,19 @@ static class Diagnostics
             ok &= game.ReadFloat(game.SpeedRva) == speedBefore * 2;
             ok &= game.NoClipHooked && game.GodHooked && game.GodCaveActive;
             foreach (Feature f in features)
+            {
                 foreach (Patch patch in f.Patches)
                     ok &= game.ReadPatchBytes(patch).SequenceEqual(patch.Bytes);
-            log.WriteLine("flags on 0x{0:X}, speed on {1}, noclip {2}, god hook {3}", flagsOn, game.ReadFloat(game.SpeedRva), game.NoClipHooked, game.GodHooked);
+                foreach (CodeHook hook in f.Hooks)
+                    ok &= game.IsHooked(hook);
+            }
+            log.WriteLine("flags on 0x{0:X}, speed on {1}, noclip {2}, god hook {3}, code hooks {4}", flagsOn, game.ReadFloat(game.SpeedRva), game.NoClipHooked, game.GodHooked, features.SelectMany(f => f.Hooks).Count(game.IsHooked));
             foreach (Feature f in features) f.On = false;
             game.Sync();
             int flagsAfter = game.ReadFlags();
             ok &= (flagsAfter & Catalog.ManagedBits) == 0 && (flagsAfter & ~Catalog.ManagedBits) == (flagsBefore & ~Catalog.ManagedBits);
             ok &= game.ReadFloat(game.SpeedRva) == speedBefore && !game.NoClipHooked && !game.GodHooked;
+            ok &= !features.SelectMany(f => f.Hooks).Any(game.IsHooked);
             foreach (Feature f in features)
                 foreach (Patch patch in f.Patches)
                     ok &= game.ReadPatchBytes(patch).SequenceEqual(patch.Original);
@@ -1354,6 +1484,7 @@ static class Diagnostics
                 foreach (Patch patch in f.Patches)
                     ok &= game.ReadPatchBytes(patch).SequenceEqual(patch.Original);
             ok &= (game.ReadFlags() & Catalog.ManagedBits) == 0 && game.ReadFloat(game.SpeedRva) == 1.25f && !game.NoClipHooked && !game.GodHooked;
+            ok &= !features.SelectMany(f => f.Hooks).Any(game.IsHooked);
             log.WriteLine("flags after 0x{0:X}, speed after {1}", game.ReadFlags(), game.ReadFloat(game.SpeedRva));
             return Finish(log, ok);
         }
