@@ -10,10 +10,12 @@ The trainer finds `metro.exe` and locates the game code it needs by byte signatu
 |---|---|---|
 | Engine debug flags | Infinite ammo, invisibility | `Catalog`, `Game.Sync` in `src/Trainer.cs` |
 | Engine setting | Fast movement (`g_player_speed_scale`) | `Game.Sync` |
-| Small code patches, restored on exit | Medkits, filters, gas mask, reload, air pressure, Volt Driver, freeze, money | `Catalog.Build` (signature, offset, bytes) |
+| Small code patches, restored on exit | Medkits, filters, gas mask, reload, recoil, air pressure, Volt Driver, freeze, money | `Catalog.Build` (signature, offset, bytes) |
+| Code cave next to the game module | Noclip, position save and teleport; god mode, no reload and no spread for the player only | `Game.BuildMoveCave`, `Game.BuildGodCave`, `Game.BuildHookCave` |
 
 Military-grade ammo is also the game's money. The engine's ammo flag on its own would make the shop free too, so the ammo feature also masks the flag out of the two money functions, and money is a separate feature that patches those same functions.
-| Code cave next to the game module | Noclip, position save and teleport, god mode for the player only | `Game.BuildMoveCave`, `Game.BuildGodCave` |
+
+Every firearm fires through one shared shot routine. No reload sends the step that takes rounds out of the magazine to a cave that skips it when the weapon belongs to the player. No recoil or spread does the same with the weapon's spread, so the player's bullets go where the crosshair points, and also starts the camera kick of each shot from zero. Enemies' weapons are left as they are.
 
 To keep the game from running half-written code, the process is paused for a few microseconds while code is patched (`NtSuspendProcess`).
 
