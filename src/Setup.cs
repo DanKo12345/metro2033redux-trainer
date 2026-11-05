@@ -13,19 +13,19 @@ using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-[assembly: AssemblyTitle("Metro 2033 Redux Trainer Setup")]
-[assembly: AssemblyProduct("Metro 2033 Redux Trainer")]
+[assembly: AssemblyTitle(Product.AppName + " Setup")]
+[assembly: AssemblyProduct(Product.AppName)]
 [assembly: AssemblyCompany("dollza")]
-[assembly: AssemblyVersion("0.3.0.0")]
-[assembly: AssemblyFileVersion("0.3.0.0")]
+[assembly: AssemblyVersion(Product.AssemblyVersion)]
+[assembly: AssemblyFileVersion(Product.AssemblyVersion)]
 
 class TrainerBusyException : Exception { }
 
 static class Installer
 {
-    public const string AppName = "Metro 2033 Redux Trainer", Version = "0.3", Author = "dollza";
-    const string ExeName = "Metro2033ReduxTrainer.exe", UninstallName = "Uninstall.exe", Payload = "trainer.exe";
-    const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Metro2033ReduxTrainer";
+    public const string AppName = Product.AppName, Version = Product.Version, Author = "dollza";
+    const string ExeName = Product.Id + ".exe", UninstallName = "Uninstall.exe", Payload = "trainer.exe";
+    const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\" + Product.Id;
     const int TrainerCloseTimeoutMs = 5000;
 
     static string StartMenuLink { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), AppName + ".lnk"); } }
@@ -140,7 +140,7 @@ static class Installer
     public static bool HandOverToTempCopy(bool silent)
     {
         if (!RunningAsUninstaller) return false;
-        string copy = Path.Combine(Path.GetTempPath(), "Metro2033ReduxTrainerUninstall-" + Guid.NewGuid().ToString("N") + ".exe");
+        string copy = Path.Combine(Path.GetTempPath(), Product.Id + "Uninstall-" + Guid.NewGuid().ToString("N") + ".exe");
         File.Copy(Application.ExecutablePath, copy);
         string arguments = "/uninstall /temp-copy " + Process.GetCurrentProcess().Id + " /dir \"" + Path.GetDirectoryName(Application.ExecutablePath) + "\"" + (silent ? " /silent" : "");
         // The copy must not inherit the install folder as its working folder, or Windows keeps that folder in use.
@@ -177,14 +177,10 @@ enum GameCheck { NotChosen, Steam, NoGameFile, NotSteam, WrongGame }
 // The trainer itself finds the running game on any disk, it never needs this path.
 static class GameLocator
 {
-    const string SteamAppId = "286690", GameExe = "metro.exe", SteamApi = "steam_api64.dll";
+    const string SteamAppId = Product.SteamAppId, GameExe = "metro.exe", SteamApi = "steam_api64.dll";
     const int HeaderSize = 0x1000, SectionSize = 40;
 
-    static string InstallFolderOf(string manifest)
-    {
-        Match folder = Regex.Match(File.ReadAllText(manifest), "\"installdir\"\\s+\"(.+?)\"");
-        return folder.Success ? folder.Groups[1].Value : null;
-    }
+    static string InstallFolderOf(string manifest) { return Product.InstallFolderOf(manifest); }
 
     public static string Find()
     {
@@ -235,6 +231,7 @@ static class GameLocator
             foreach (string manifest in Directory.GetFiles(apps, "appmanifest_*.acf"))
                 if (string.Equals(InstallFolderOf(manifest), Path.GetFileName(folder), StringComparison.OrdinalIgnoreCase))
                     return Path.GetFileName(manifest) == "appmanifest_" + SteamAppId + ".acf" ? GameCheck.Steam : GameCheck.WrongGame;
+        if (Product.IsOtherGame(folder)) return GameCheck.WrongGame;
         return HasSteamStub(exe) && File.Exists(Path.Combine(folder, SteamApi)) ? GameCheck.Steam : GameCheck.NotSteam;
     }
 }
@@ -379,7 +376,7 @@ class SetupForm : Form
         base.OnPaint(e);
         Graphics g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        Theme.DrawHeader(g, ClientSize.Width, Theme.S(72), "METRO 2033 REDUX", Loc.T("setup.subtitle"));
+        Theme.DrawHeader(g, ClientSize.Width, Theme.S(72), Product.Header, Loc.T("setup.subtitle"));
 
         Rectangle card = new Rectangle(Theme.S(20), Theme.S(78), Theme.S(560), Theme.S(202));
         Theme.Fill(g, Theme.Card, card, Theme.S(10));

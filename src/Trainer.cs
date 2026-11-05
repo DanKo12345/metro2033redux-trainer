@@ -1,4 +1,4 @@
-// Metro 2033 Redux trainer for the October 2026 build (metro.exe, build date 2026-10-23).
+// Trainer for Metro 2033 Redux and, built with LASTLIGHT, Metro Last Light Redux (the shared metro.exe of the November 2026 update).
 // Uses the engine's own debug flags and a few small code patches that are undone on exit.
 // It never touches the network. The only thing it stores is the language and sound choice in HKCU.
 using System;
@@ -16,11 +16,11 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 
-[assembly: AssemblyTitle("Metro 2033 Redux Trainer")]
-[assembly: AssemblyProduct("Metro 2033 Redux Trainer")]
+[assembly: AssemblyTitle(Product.AppName)]
+[assembly: AssemblyProduct(Product.AppName)]
 [assembly: AssemblyCompany("dollza")]
-[assembly: AssemblyVersion("0.3.0.0")]
-[assembly: AssemblyFileVersion("0.3.0.0")]
+[assembly: AssemblyVersion(Product.AssemblyVersion)]
+[assembly: AssemblyFileVersion(Product.AssemblyVersion)]
 
 static class Native
 {
@@ -62,7 +62,7 @@ class Patch
     }
 }
 
-enum HookCave { NoReload, NoSpread }
+enum HookCave { NoReload, NoSpread, RapidFire }
 
 // A jump from the game's code into a cave of the trainer's. As with a patch, the signature holds the
 // original bytes, and a jump left by a trainer that was killed is recognised so it can be undone.
@@ -157,6 +157,10 @@ static class Catalog
     const string NoReloadSig = "49 8B 06 41 2B FD 8B D7 49 8B CE FF 90 60 13 00 00";
     const string NoSpreadSig = "49 8B 04 24 49 8B CC 44 0F 28 F0 45 0F 57 FF FF 90 08 01 00 00 66 44 0F 6F 25";
 
+    // The weapon update fires while its cooldown (weapon+0x570) is not above zero and adds the shot
+    // interval, which a virtual call returns in xmm0, for every shot (addss xmm0, [r14+0x570]).
+    const string RapidFireSig = "49 8B CE 49 8B 06 FF 90 18 14 00 00 F3 41 0F 58 86 70 05 00 00 41 0F B7 96 3A 07 00 00";
+
     // The order is the index MainForm places the rows by.
     public static List<Feature> Build()
     {
@@ -200,11 +204,15 @@ static class Catalog
                 Hooks = new[] { new CodeHook(NoSpreadSig, 7, 8, HookCave.NoSpread) },
                 Patches = new[] {
                 new Patch("33 ED 0F 29 74 24 50 8B F5 F3 0F 10 35 72 66 BC 00 0F 29 7C 24 40 0F 57 FF", 9, "0F 57 F6 0F 1F 44 00 00") } },
+            // The cave shortens the shot interval of the player's weapon, so automatic weapons fire
+            // faster and the others take the next shot sooner. Enemies' weapons are left as they are.
+            new Feature { Key = "rapid",
+                Hooks = new[] { new CodeHook(RapidFireSig, 12, 9, HookCave.RapidFire) } },
         };
     }
 }
 
-enum AttachResult { Connected, NotRunning, NoAccess, Waiting, Unsupported }
+enum AttachResult { Connected, NotRunning, NoAccess, Waiting, Unsupported, WrongGame }
 
 class Game : IDisposable
 {
@@ -227,10 +235,12 @@ class Game : IDisposable
     const string GameSig = "48 8B 05 ?? ?? ?? ?? 48 8B 48 38 48 85 C9 4C 8D 81 A0 00 00 00";
     const int NoClipCallOffset = 30, GodCheckLength = 11;
     const int CaveSize = 0x1000, CaveEnabled = 0, CaveSpeed = 4, CaveVertical = 8, CaveController = 0x10, CavePlayer = 0x18, CaveGodEnabled = 0x20;
-    const int CaveTeleport = 0x24, CaveTarget = 0x28, FootOffset = 0x1A8;
-    const int CaveCodeOffset = 0x40, CaveGodOffset = 0x200, CaveNoReloadOffset = 0x300, CaveNoSpreadOffset = 0x380;
+    const int CaveTeleport = 0x24, CaveTarget = 0x28, CaveRapidScale = 0x38, FootOffset = 0x1A8;
+    const int CaveCodeOffset = 0x40, CaveGodOffset = 0x200, CaveNoReloadOffset = 0x300, CaveNoSpreadOffset = 0x380, CaveRapidOffset = 0x400;
     const long NearestCave = 0x100000, FarthestCave = 0x70000000, CaveStep = 0x10000;
     const float NoClipSpeedScale = 2f, NoClipVerticalSpeed = 6f, NoClipBoost = 3f;
+    // Half the shot interval: twice the rate of fire.
+    const float RapidFireScale = 0.5f;
     const int VK_SHIFT = 0x10, VK_CONTROL = 0x11, VK_SPACE = 0x20;
 
     readonly List<Feature> features;
@@ -254,13 +264,20 @@ class Game : IDisposable
         this.features = features;
     }
 
+    static bool IsThisGame(Process p)
+    {
+        try { return !Product.IsOtherGame(Path.GetDirectoryName(p.MainModule.FileName)); }
+        catch (Exception) { return true; }   // unreadable path: the signatures still decide
+    }
+
     public AttachResult TryAttach()
     {
         Detach();
-        // Last Light Redux also runs as metro.exe, the signatures below are what tell the games apart.
+        // Both Redux games run as the same metro.exe, so only the folder it runs from tells them apart.
         Process[] found = Process.GetProcessesByName("metro");
         if (found.Length == 0) return AttachResult.NotRunning;
-        Process p = found[0];
+        Process p = found.FirstOrDefault(IsThisGame);
+        if (p == null) return AttachResult.WrongGame;
         IntPtr h = Native.OpenProcess(Native.PROCESS_VM_READ | Native.PROCESS_VM_WRITE | Native.PROCESS_VM_OPERATION | Native.PROCESS_QUERY_INFORMATION | Native.PROCESS_SUSPEND_RESUME, false, p.Id);
         if (h == IntPtr.Zero) return AttachResult.NoAccess;
         try
@@ -549,11 +566,17 @@ class Game : IDisposable
         return player;
     }
 
-    int CaveOffset(HookCave cave) { return cave == HookCave.NoReload ? CaveNoReloadOffset : CaveNoSpreadOffset; }
+    int CaveOffset(HookCave cave)
+    {
+        if (cave == HookCave.NoReload) return CaveNoReloadOffset;
+        return cave == HookCave.NoSpread ? CaveNoSpreadOffset : CaveRapidOffset;
+    }
 
     // No reload: rounds in edi, rounds fired in r13d. The player's weapon keeps edi.
     // No spread: the weapon's spread in xmm0, kept in xmm14 for the bullets. The player's weapon gets
     // zero. rax holds the vtable the next instruction calls through, so it is saved.
+    // Rapid fire: the shot interval in xmm0 is scaled for the player's weapon before it is added to
+    // the cooldown. rax and rdx are free there: the code after the hook loads rdx itself.
     byte[] BuildHookCave(CodeHook hook, long cave)
     {
         Asm a = new Asm(cave + CaveOffset(hook.Cave));
@@ -563,6 +586,15 @@ class Game : IDisposable
             a.Hex("41 2B FD");                                     // sub edi, r13d
             a.Land(player);
             a.Hex("49 8B 06");                                     // mov rax, [r14]
+        }
+        else if (hook.Cave == HookCave.RapidFire)
+        {
+            int player = EmitPlayerWeaponJump(a);
+            int done = a.JumpFrom("E9");                           // other: jmp done
+            a.Land(player);
+            a.Rip("F3 0F 59 05", cave + CaveRapidScale, 0);        // mulss xmm0, [scale]
+            a.Land(done);
+            a.Hex("F3 41 0F 58 86 70 05 00 00");                   // addss xmm0, [r14+0x570]
         }
         else
         {
@@ -604,6 +636,7 @@ class Game : IDisposable
         long cave = AllocateCave();
         caveAddress = cave;
         WriteAbsolute(cave + CaveSpeed, BitConverter.GetBytes(NoClipSpeedScale));
+        WriteAbsolute(cave + CaveRapidScale, BitConverter.GetBytes(RapidFireScale));
         WriteAbsolute(cave + CaveCodeOffset, BuildMoveCave(cave));
         WriteAbsolute(cave + CaveGodOffset, BuildGodCave(cave));
         foreach (CodeHook hook in features.SelectMany(f => f.Hooks).Where(h => h.Rva >= 0))
@@ -930,7 +963,7 @@ class MainForm : Form
     {
         { "god", 0x70 }, { "ammo", 0x71 }, { "stealth", 0x72 }, { "medkits", 0x73 },
         { "filters", 0x76 }, { "nomask", 0x77 }, { "noreload", 0x78 }, { "air", 0x79 }, { "noclip", 0x7A },
-        { "volt", 0x36 }, { "freeze", 0x37 }, { "speed", 0x38 }, { "money", 0x39 }, { "norecoil", 0x30 },
+        { "volt", 0x36 }, { "freeze", 0x37 }, { "speed", 0x38 }, { "money", 0x39 }, { "norecoil", 0x30 }, { "rapid", 0xBD },
         { SaveAction, 0x21 }, { TeleportAction, 0x22 },
     };
     const int NormalRetryTicks = 3, UnsupportedRetryTicks = 20;
@@ -977,7 +1010,7 @@ class MainForm : Form
         AddCard("section.weapons", right, y, column, 310);
         AddCard("section.world", left, world, 740, 176);
 
-        int[] survival = { 0, 2, 3, 4, 5 }, weapons = { 1, 12, 6, 13, 7, 8 };
+        int[] survival = { 0, 2, 3, 4, 5, 12 }, weapons = { 1, 6, 13, 14, 7, 8 };
         for (int i = 0; i < survival.Length; i++) Place(survival[i], left, y + title + i * 44, 44);
         for (int i = 0; i < weapons.Length; i++) Place(weapons[i], right, y + title + i * 44, 44);
         Place(9, left, world + title, 44);
@@ -1027,7 +1060,7 @@ class MainForm : Form
         disableAll.Click += delegate { DisableAll(); };
         Controls.Add(disableAll);
 
-        langBar.SetBounds(Theme.S(310), Theme.S(26), Theme.S(180), Theme.S(28));
+        PlaceLangBar();
         langBar.Picked += delegate { ApplyLanguage(); };
         Controls.Add(langBar);
 
@@ -1106,6 +1139,8 @@ class MainForm : Form
             case 0x6D: return "Num -";
             case 0x6E: return "Num .";
             case 0x6F: return "Num /";
+            case 0xBD: return "-";
+            case 0xBB: return "=";
         }
         System.Text.StringBuilder name = new System.Text.StringBuilder(32);
         int scan = (int)Native.MapVirtualKey((uint)vk, 0);
@@ -1225,9 +1260,17 @@ class MainForm : Form
         Controls.Add(feature.Row);
     }
 
+    // Last Light's title is longer than 2033's, so the language bar starts after whatever the title needs.
+    void PlaceLangBar()
+    {
+        int title = Theme.S(74) + TextRenderer.MeasureText(Product.Header, Theme.HeadFont, Size.Empty, TextFormatFlags.NoPadding).Width;
+        langBar.SetBounds(Math.Max(Theme.S(310), title + Theme.S(18)), Theme.S(26), Theme.S(180), Theme.S(28));
+    }
+
     void ApplyLanguage()
     {
-        Text = "Metro 2033 Redux Trainer";
+        Text = Product.AppName;
+        PlaceLangBar();
         foreach (Feature f in features)
             f.Row.SetText(Loc.T(f.Key), Loc.T(f.Key + ".sub"), Loc.T("notfound"));
         soundRow.SetText(Loc.T("sound"), null, null);
@@ -1301,6 +1344,7 @@ class MainForm : Form
         if (result == AttachResult.NotRunning) SetStatus("status.notrunning", Theme.Faint);
         else if (result == AttachResult.NoAccess) SetStatus("status.access", Theme.Accent);
         else if (result == AttachResult.Unsupported) SetStatus("status.unsupported", Theme.Accent);
+        else if (result == AttachResult.WrongGame) SetStatus("status.wronggame", Theme.Accent);
         else SetStatus("status.waiting", Theme.Accent);
     }
 
@@ -1315,7 +1359,7 @@ class MainForm : Form
         base.OnPaint(e);
         Graphics g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        Theme.DrawHeader(g, ClientSize.Width, Theme.S(78), "METRO 2033 REDUX", Loc.T("subtitle"));
+        Theme.DrawHeader(g, ClientSize.Width, Theme.S(78), Product.Header, Loc.T("subtitle"));
 
         string status = string.Format(Loc.T(statusKey), statusArgs);
         Size size = TextRenderer.MeasureText(status, Theme.StatusFont, Size.Empty, TextFormatFlags.NoPadding);
@@ -1543,7 +1587,7 @@ static class Program
 
         // Two trainers would fight over the same flags and patches.
         bool firstInstance;
-        using (new Mutex(true, "Metro2033ReduxTrainer.Instance", out firstInstance))
+        using (new Mutex(true, Product.Id + ".Instance", out firstInstance))
         {
             if (!firstInstance) { FocusRunningTrainer(); return 0; }
             Application.Run(new MainForm());
