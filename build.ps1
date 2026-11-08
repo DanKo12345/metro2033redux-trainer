@@ -1,5 +1,5 @@
 # Builds the trainer and the setup program with the C# compiler that ships with Windows.
-# Output: a trainer and a setup program for each game, Metro 2033 Redux and (built with LASTLIGHT) Metro Last Light Redux.
+# Output: dist\Metro2033ReduxTrainer.exe and dist\Metro2033ReduxTrainerSetup.exe
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 
@@ -57,17 +57,11 @@ function Invoke-Csc([string]$output, [string]$icon, [string[]]$sources, [string[
 
 $src = Join-Path $root 'src'
 $shared = (Join-Path $src 'Product.cs'), (Join-Path $src 'Localization.cs'), (Join-Path $src 'Ui.cs')
-# Same code for both games; the accent colours match Theme.Accent in Ui.cs.
-$games = @(
-    @{ Id = 'Metro2033ReduxTrainer'; Icon = 'icon.ico'; Accent = [Drawing.Color]::FromArgb(232, 163, 61); Define = @() },
-    @{ Id = 'MetroLastLightReduxTrainer'; Icon = 'icon_lastlight.ico'; Accent = [Drawing.Color]::FromArgb(232, 108, 52); Define = @('/define:LASTLIGHT') }
-)
-foreach ($game in $games) {
-    $icon = Join-Path $root ('assets\' + $game.Icon)
-    New-Icon $icon $game.Accent
-    $trainer = Join-Path $dist ($game.Id + '.exe')
-    $setup = Join-Path $dist ($game.Id + 'Setup.exe')
-    Invoke-Csc $trainer $icon ($shared + (Join-Path $src 'Trainer.cs')) $game.Define
-    Invoke-Csc $setup $icon ($shared + (Join-Path $src 'Setup.cs')) ($game.Define + "/resource:$trainer,trainer.exe")
-    Get-Item $trainer, $setup | Select-Object Name, Length
-}
+# The icon colour matches Theme.Accent in Ui.cs.
+$icon = Join-Path $root 'assets\icon.ico'
+New-Icon $icon ([Drawing.Color]::FromArgb(232, 163, 61))
+$trainer = Join-Path $dist 'Metro2033ReduxTrainer.exe'
+$setup = Join-Path $dist 'Metro2033ReduxTrainerSetup.exe'
+Invoke-Csc $trainer $icon ($shared + (Join-Path $src 'Trainer.cs')) @()
+Invoke-Csc $setup $icon ($shared + (Join-Path $src 'Setup.cs')) @("/resource:$trainer,trainer.exe")
+Get-Item $trainer, $setup | Select-Object Name, Length
