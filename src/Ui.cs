@@ -11,10 +11,8 @@ static class Theme
     public static readonly Color Back = Color.FromArgb(17, 19, 23), Card = Color.FromArgb(27, 30, 36), CardHover = Color.FromArgb(35, 39, 46);
     public static readonly Color Text = Color.FromArgb(232, 230, 225), Muted = Color.FromArgb(144, 150, 160), Faint = Color.FromArgb(82, 87, 96);
     public static readonly Color Good = Color.FromArgb(103, 199, 124), Track = Color.FromArgb(58, 62, 71), Chip = Color.FromArgb(46, 50, 59);
-    // The two trainers differ only here. 2033: amber on a green tunnel light.
-    // Last Light: the orange-red of its menu display on the rusty glow of its loading screens.
-    public static readonly Color Accent = Product.IsLastLight ? Color.FromArgb(232, 108, 52) : Color.FromArgb(232, 163, 61);
-    public static readonly Color Tunnel = Product.IsLastLight ? Color.FromArgb(42, 24, 17) : Color.FromArgb(18, 36, 30);
+    public static readonly Color Accent = Color.FromArgb(232, 163, 61);
+    public static readonly Color Tunnel = Color.FromArgb(18, 36, 30);
     public static readonly Font LangFont = new Font("Microsoft YaHei UI", 8.5f);
     public static Font TitleFont, SubFont, KeyFont, HeadFont, SectionFont, StatusFont, LabelFont, ValueFont, ButtonFont;
     public static float K = 1f;

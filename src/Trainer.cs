@@ -1,4 +1,4 @@
-// Trainer for Metro 2033 Redux and, built with LASTLIGHT, Metro Last Light Redux (the shared metro.exe of the November 2026 update).
+// Trainer for the Steam version of Metro 2033 Redux (metro.exe of the November 2026 update).
 // Uses the engine's own debug flags and a few small code patches that are undone on exit.
 // It never touches the network. The only thing it stores is the language and sound choice in HKCU.
 using System;
@@ -62,7 +62,7 @@ class Patch
     }
 }
 
-enum HookCave { NoReload, NoSpread, RapidFire }
+enum HookCave { NoReload, NoSpread, RapidFire, FilterDrain }
 
 // A jump from the game's code into a cave of the trainer's. As with a patch, the signature holds the
 // original bytes, and a jump left by a trainer that was killed is recognised so it can be undone.
@@ -161,6 +161,9 @@ static class Catalog
     // interval, which a virtual call returns in xmm0, for every shot (addss xmm0, [r14+0x570]).
     const string RapidFireSig = "49 8B CE 49 8B 06 FF 90 18 14 00 00 F3 41 0F 58 86 70 05 00 00 41 0F B7 96 3A 07 00 00";
 
+    // Filter time: subss xmm0, xmm9 takes this frame's use off [rsi+0x44c]; xmm2 is the drain multiplier.
+    const string FilterDrainSig = "F3 44 0F 59 CA 44 0F 28 C0 F3 44 0F 5E 86 54 04 00 00 F3 41 0F 5C C1 F3 0F 11 AE B4 04 00 00 41 0F 28 C9 F3 0F 11 45 77 E8 ?? ?? ?? ??";
+
     // The order is the index MainForm places the rows by.
     public static List<Feature> Build()
     {
@@ -173,8 +176,12 @@ static class Catalog
             new Feature { Key = "stealth", Bit = StealthBit },
             new Feature { Key = "medkits", Patches = new[] {
                 new Patch("B8 01 00 00 00 D3 E0 F7 D0 41 21 80 78 04 00 00 41 C7 80 84 04 00 00 FF 00 00 00 48 8B 0D ?? ?? ?? ?? 45 33 C0 33 D2", 9, "90 90 90 90 90 90 90") } },
-            new Feature { Key = "filters", Patches = new[] {
-                new Patch("F3 44 0F 59 CA 44 0F 28 C0 F3 44 0F 5E 86 54 04 00 00 F3 41 0F 5C C1 F3 0F 11 AE B4 04 00 00 41 0F 28 C9 F3 0F 11 45 77 E8 ?? ?? ?? ??", 18, "90 90 90 90 90"),
+            // The filter time drains by frame time x a multiplier the game normally keeps at 1. Some
+            // scenes raise it to empty the filter on purpose and wait for the player to change it, so
+            // the cave only skips the drain while the multiplier is normal. The patches keep the spare filters.
+            new Feature { Key = "filters",
+                Hooks = new[] { new CodeHook(FilterDrainSig, 18, 5, HookCave.FilterDrain) },
+                Patches = new[] {
                 new Patch("0F 5B C0 F3 0F 5C C6 F3 0F 5D D0 F3 0F 5C CA F3 0F 58 D6 F3 0F 11 8F 80 06 00 00 F3 0F 11 93 54 04 00 00 F3 0F 11 93 4C 04 00 00", 11, "90 90 90 90"),
                 new Patch("0F 5B C0 F3 0F 5C C6 F3 0F 5D D0 F3 0F 5C CA F3 0F 58 D6 F3 0F 11 8E 80 06 00 00 F3 0F 11 93 54 04 00 00 F3 0F 11 93 4C 04 00 00", 11, "90 90 90 90") } },
             new Feature { Key = "nomask", Patches = new[] {
@@ -235,12 +242,14 @@ class Game : IDisposable
     const string GameSig = "48 8B 05 ?? ?? ?? ?? 48 8B 48 38 48 85 C9 4C 8D 81 A0 00 00 00";
     const int NoClipCallOffset = 30, GodCheckLength = 11;
     const int CaveSize = 0x1000, CaveEnabled = 0, CaveSpeed = 4, CaveVertical = 8, CaveController = 0x10, CavePlayer = 0x18, CaveGodEnabled = 0x20;
-    const int CaveTeleport = 0x24, CaveTarget = 0x28, CaveRapidScale = 0x38, FootOffset = 0x1A8;
-    const int CaveCodeOffset = 0x40, CaveGodOffset = 0x200, CaveNoReloadOffset = 0x300, CaveNoSpreadOffset = 0x380, CaveRapidOffset = 0x400;
+    const int CaveTeleport = 0x24, CaveTarget = 0x28, CaveRapidScale = 0x38, CaveFilterLimit = 0x3C, FootOffset = 0x1A8;
+    const int CaveCodeOffset = 0x40, CaveGodOffset = 0x200, CaveNoReloadOffset = 0x300, CaveNoSpreadOffset = 0x380, CaveRapidOffset = 0x400, CaveFilterOffset = 0x480;
     const long NearestCave = 0x100000, FarthestCave = 0x70000000, CaveStep = 0x10000;
     const float NoClipSpeedScale = 2f, NoClipVerticalSpeed = 6f, NoClipBoost = 3f;
     // Half the shot interval: twice the rate of fire.
     const float RapidFireScale = 0.5f;
+    // Above this drain multiplier a scene is emptying the filter on purpose (5 where you first change one).
+    const float FilterDrainLimit = 2.5f;
     const int VK_SHIFT = 0x10, VK_CONTROL = 0x11, VK_SPACE = 0x20;
 
     readonly List<Feature> features;
@@ -569,7 +578,8 @@ class Game : IDisposable
     int CaveOffset(HookCave cave)
     {
         if (cave == HookCave.NoReload) return CaveNoReloadOffset;
-        return cave == HookCave.NoSpread ? CaveNoSpreadOffset : CaveRapidOffset;
+        if (cave == HookCave.NoSpread) return CaveNoSpreadOffset;
+        return cave == HookCave.RapidFire ? CaveRapidOffset : CaveFilterOffset;
     }
 
     // No reload: rounds in edi, rounds fired in r13d. The player's weapon keeps edi.
@@ -586,6 +596,13 @@ class Game : IDisposable
             a.Hex("41 2B FD");                                     // sub edi, r13d
             a.Land(player);
             a.Hex("49 8B 06");                                     // mov rax, [r14]
+        }
+        else if (hook.Cave == HookCave.FilterDrain)
+        {
+            a.Rip("0F 2F 15", cave + CaveFilterLimit, 0);          // comiss xmm2, [limit]
+            int keep = a.JumpFrom("0F 86");                        // jbe keep (normal use: filter time stays)
+            a.Hex("F3 41 0F 5C C1");                               // subss xmm0, xmm9
+            a.Land(keep);
         }
         else if (hook.Cave == HookCave.RapidFire)
         {
@@ -637,6 +654,7 @@ class Game : IDisposable
         caveAddress = cave;
         WriteAbsolute(cave + CaveSpeed, BitConverter.GetBytes(NoClipSpeedScale));
         WriteAbsolute(cave + CaveRapidScale, BitConverter.GetBytes(RapidFireScale));
+        WriteAbsolute(cave + CaveFilterLimit, BitConverter.GetBytes(FilterDrainLimit));
         WriteAbsolute(cave + CaveCodeOffset, BuildMoveCave(cave));
         WriteAbsolute(cave + CaveGodOffset, BuildGodCave(cave));
         foreach (CodeHook hook in features.SelectMany(f => f.Hooks).Where(h => h.Rva >= 0))

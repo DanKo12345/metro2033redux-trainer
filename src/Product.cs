@@ -1,22 +1,14 @@
-﻿// Which game a build is for. build.ps1 compiles every program twice, once with LASTLIGHT defined.
-// Both games ship the same metro.exe since the November 2026 update, so a build tells them apart by folder.
+﻿// The game this trainer is for. Metro 2033 Redux and Metro Last Light Redux ship the same metro.exe
+// since the November 2026 update, so the trainer tells them apart by the folder the game runs from.
 using System;
 using System.IO;
 using System.Text.RegularExpressions;
 
 static class Product
 {
-#if LASTLIGHT
-    public const string Game = "Metro Last Light Redux", Header = "METRO LAST LIGHT REDUX", Id = "MetroLastLightReduxTrainer";
-    public const string SteamAppId = "287390", OtherSteamAppId = "286690";
-    public const string Version = "0.1", AssemblyVersion = "0.1.0.0";
-    public static readonly bool IsLastLight = true;
-#else
     public const string Game = "Metro 2033 Redux", Header = "METRO 2033 REDUX", Id = "Metro2033ReduxTrainer";
     public const string SteamAppId = "286690", OtherSteamAppId = "287390";
-    public const string Version = "0.4", AssemblyVersion = "0.4.0.0";
-    public static readonly bool IsLastLight = false;
-#endif
+    public const string Version = "0.5", AssemblyVersion = "0.5.0.0";
     public const string AppName = Game + " Trainer";
 
     // A video only Last Light has, for copies that are not in a Steam library with a manifest.
@@ -41,7 +33,7 @@ static class Product
         return null;
     }
 
-    // True when the folder holds the other Redux game, the one this build is not for.
+    // True when the folder holds the other Redux game, Metro Last Light Redux.
     public static bool IsOtherGame(string folder)
     {
         try
@@ -49,7 +41,7 @@ static class Product
             folder = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar);
             string app = SteamAppOf(folder);
             if (app != null) return app == OtherSteamAppId;
-            return File.Exists(Path.Combine(folder, LastLightMarker)) != IsLastLight;
+            return File.Exists(Path.Combine(folder, LastLightMarker));
         }
         catch (Exception) { return false; }
     }
