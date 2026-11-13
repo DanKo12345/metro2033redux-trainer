@@ -161,10 +161,15 @@ static class Catalog
     // interval, which a virtual call returns in xmm0, for every shot (addss xmm0, [r14+0x570]).
     const string RapidFireSig = "49 8B CE 49 8B 06 FF 90 18 14 00 00 F3 41 0F 58 86 70 05 00 00 41 0F B7 96 3A 07 00 00";
 
+    // The battery object keeps its charge at +0x480 and loses rate * dt every frame:
+    // subss xmm3, xmm1, then clamped to 0..1 and stored. Without the subtraction the charge stays,
+    // while the hand charger still adds to it.
+    const string BatterySig = "F3 0F 10 B9 80 04 00 00 49 8B F9 0F 28 DF C7 40 20 00 00 80 3F C7 40 C8 00 00 00 00 F3 0F 59 CA F3 0F 5C D9 0F 28 E3";
+
     // Filter time: subss xmm0, xmm9 takes this frame's use off [rsi+0x44c]; xmm2 is the drain multiplier.
     const string FilterDrainSig = "F3 44 0F 59 CA 44 0F 28 C0 F3 44 0F 5E 86 54 04 00 00 F3 41 0F 5C C1 F3 0F 11 AE B4 04 00 00 41 0F 28 C9 F3 0F 11 45 77 E8 ?? ?? ?? ??";
 
-    // The order is the index MainForm places the rows by.
+    // MainForm places the rows by key.
     public static List<Feature> Build()
     {
         return new List<Feature>
@@ -197,6 +202,7 @@ static class Catalog
                 new Patch("89 83 00 0C 00 00 EB 4E F3 0F 10 83 00 0C 00 00 F3 0F 5C C7 0F 2F C6 F3 0F 11 83 00 0C 00 00 73 16 48 8B 03", 16, "90 90 90 90") } },
             new Feature { Key = "volt", Patches = new[] {
                 new Patch("BA 38 15 00 00 F3 0F 10 96 24 07 00 00 48 85 C0 F3 0F 5C D0 0F 28 C8 48 8D 88 90 14 00 00 8B 86 10 07 00 00 48 0F 44 CA", 16, "90 90 90 90") } },
+            new Feature { Key = "battery", Patches = new[] { new Patch(BatterySig, 32, "0F 1F 40 00") } },
             new Feature { Key = "freeze", Patches = new[] {
                 new Patch("48 8B 89 00 01 00 00 49 8B F8 48 85 C9 0F 84 ?? ?? ?? ?? 48 8B 01 FF 50 18 48 85 C0 0F 84 ?? ?? ?? ??", 13, "90 E9") } },
             new Feature { Key = "speed", IsSpeed = true },
@@ -877,6 +883,13 @@ class SpeedSlider : Control
     public event EventHandler ValueChanged;
     public double Value { get { return value; } }
 
+    // Sets a remembered value without raising ValueChanged.
+    public void SetValue(double v)
+    {
+        value = Math.Max(Min, Math.Min(Max, Math.Round(v / Step) * Step));
+        Invalidate();
+    }
+
     public SpeedSlider()
     {
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
@@ -981,7 +994,7 @@ class MainForm : Form
     {
         { "god", 0x70 }, { "ammo", 0x71 }, { "stealth", 0x72 }, { "medkits", 0x73 },
         { "filters", 0x76 }, { "nomask", 0x77 }, { "noreload", 0x78 }, { "air", 0x79 }, { "noclip", 0x7A },
-        { "volt", 0x36 }, { "freeze", 0x37 }, { "speed", 0x38 }, { "money", 0x39 }, { "norecoil", 0x30 }, { "rapid", 0xBD },
+        { "volt", 0x36 }, { "battery", 0xBB }, { "freeze", 0x37 }, { "speed", 0x38 }, { "money", 0x39 }, { "norecoil", 0x30 }, { "rapid", 0xBD },
         { SaveAction, 0x21 }, { TeleportAction, 0x22 },
     };
     const int NormalRetryTicks = 3, UnsupportedRetryTicks = 20;
@@ -995,6 +1008,9 @@ class MainForm : Form
     readonly ActionRow saveRow = new ActionRow();
     readonly ActionRow teleportRow = new ActionRow { Available = false };
     readonly ToggleRow topRow = new ToggleRow();
+    readonly ToggleRow rememberRow = new ToggleRow();
+    // Never switched on by themselves: they change how scripted scenes play out, or drop you through the floor.
+    static readonly HashSet<string> NotRestored = new HashSet<string> { "freeze", "noclip" };
     bool positionSaved;
     readonly LangBar langBar = new LangBar();
     readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer { Interval = 500 };
@@ -1019,24 +1035,32 @@ class MainForm : Form
         MaximizeBox = false;
         DoubleBuffered = true;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(Theme.S(780), Theme.S(660));
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
         catch (Exception) { }
 
-        int left = 20, right = 398, column = 362, y = 84, title = 34, world = 406;
-        AddCard("section.survival", left, y, column, 310);
-        AddCard("section.weapons", right, y, column, 310);
+        // The weapons card has seven rows, so the cards are taller and everything below moves down.
+        string[] survival = { "god", "stealth", "medkits", "filters", "nomask", "battery" };
+        string[] weapons = { "ammo", "noreload", "norecoil", "rapid", "air", "volt", "money" };
+        int rows = Math.Max(survival.Length, weapons.Length), extra = (rows - 6) * 44;
+        int left = 20, right = 398, column = 362, y = 84, title = 34, world = 406 + extra, bottom = 592 + extra;
+        ClientSize = new Size(Theme.S(780), Theme.S(660 + extra));
+        AddCard("section.survival", left, y, column, 310 + extra);
+        AddCard("section.weapons", right, y, column, 310 + extra);
         AddCard("section.world", left, world, 740, 176);
 
-        int[] survival = { 0, 2, 3, 4, 5, 12 }, weapons = { 1, 6, 13, 14, 7, 8 };
         for (int i = 0; i < survival.Length; i++) Place(survival[i], left, y + title + i * 44, 44);
         for (int i = 0; i < weapons.Length; i++) Place(weapons[i], right, y + title + i * 44, 44);
-        Place(9, left, world + title, 44);
-        Place(10, right, world + title, 44);
-        Place(11, left, world + title + 44, 44);
+        Place("freeze", left, world + title, 44);
+        Place("speed", right, world + title, 44);
+        Place("noclip", left, world + title + 44, 44);
 
         slider.SetBounds(Theme.S(right + 6), Theme.S(world + title + 46), Theme.S(column - 12), Theme.S(34));
-        slider.ValueChanged += delegate { game.SpeedMultiplier = slider.Value; SyncGame(); };
+        slider.ValueChanged += delegate
+        {
+            game.SpeedMultiplier = slider.Value;
+            if (rememberRow.On) Preferences.Write("SpeedMultiplier", slider.Value.ToString(CultureInfo.InvariantCulture));
+            SyncGame();
+        };
         Controls.Add(slider);
 
         saveRow.SetBounds(Theme.S(left + 6), Theme.S(world + title + 88), Theme.S(350), Theme.S(44));
@@ -1048,7 +1072,7 @@ class MainForm : Form
         Controls.Add(saveRow);
         Controls.Add(teleportRow);
 
-        topRow.SetBounds(Theme.S(130), Theme.S(592), Theme.S(170), Theme.S(32));
+        topRow.SetBounds(Theme.S(124), Theme.S(bottom), Theme.S(160), Theme.S(32));
         topRow.BackColor = Theme.Back;
         topRow.On = Preferences.Read("TopMost") == "1";
         topRow.SnapAnimation();
@@ -1061,7 +1085,7 @@ class MainForm : Form
         };
         Controls.Add(topRow);
 
-        soundRow.SetBounds(Theme.S(20), Theme.S(592), Theme.S(100), Theme.S(32));
+        soundRow.SetBounds(Theme.S(20), Theme.S(bottom), Theme.S(98), Theme.S(32));
         soundRow.BackColor = Theme.Back;
         soundRow.On = Preferences.Read("Sound") != "0";
         soundRow.SnapAnimation();
@@ -1074,7 +1098,25 @@ class MainForm : Form
         };
         Controls.Add(soundRow);
 
-        disableAll.SetBounds(Theme.S(310), Theme.S(592), Theme.S(450), Theme.S(32));
+        rememberRow.SetBounds(Theme.S(290), Theme.S(bottom), Theme.S(230), Theme.S(32));
+        rememberRow.BackColor = Theme.Back;
+        rememberRow.On = Preferences.Read("Remember") == "1";
+        rememberRow.SnapAnimation();
+        rememberRow.Toggled += delegate
+        {
+            Preferences.Write("Remember", rememberRow.On ? "1" : "0");
+            SaveEnabled();
+            sounds.Play(rememberRow.On);
+        };
+        Controls.Add(rememberRow);
+        double speed;
+        if (rememberRow.On && double.TryParse(Preferences.Read("SpeedMultiplier"), NumberStyles.Float, CultureInfo.InvariantCulture, out speed))
+        {
+            slider.SetValue(speed);
+            game.SpeedMultiplier = slider.Value;
+        }
+
+        disableAll.SetBounds(Theme.S(526), Theme.S(bottom), Theme.S(234), Theme.S(32));
         disableAll.Click += delegate { DisableAll(); };
         Controls.Add(disableAll);
 
@@ -1268,9 +1310,9 @@ class MainForm : Form
         cards.Add(Tuple.Create(key, new Rectangle(Theme.S(x), Theme.S(y), Theme.S(width), Theme.S(height))));
     }
 
-    void Place(int index, int cardX, int y, int height)
+    void Place(string key, int cardX, int y, int height)
     {
-        Feature feature = features[index];
+        Feature feature = features.Find(f => f.Key == key);
         feature.Row = new ToggleRow();
         feature.Row.HotkeyClicked += delegate { StartCapture(feature.Key); };
         feature.Row.SetBounds(Theme.S(cardX + 6), Theme.S(y), Theme.S(350), Theme.S(height));
@@ -1294,6 +1336,7 @@ class MainForm : Form
         soundRow.SetText(Loc.T("sound"), null, null);
         RefreshHotkeyLabels();
         topRow.SetText(Loc.T("topmost"), null, null);
+        rememberRow.SetText(Loc.T("remember"), null, null);
         disableAll.Invalidate();
         UpdatePositionRows();
         slider.Invalidate();
@@ -1305,6 +1348,30 @@ class MainForm : Form
         feature.On = feature.Row.On;
         sounds.Play(feature.On);
         SyncGame();
+        SaveEnabled();
+    }
+
+    // With "Remember enabled" on, the features switched on are kept in HKCU and switched on again the
+    // next time the trainer connects to the game.
+    void SaveEnabled()
+    {
+        if (!rememberRow.On) return;
+        Preferences.Write("Enabled", string.Join(",", features.Where(f => f.On).Select(f => f.Key)));
+        Preferences.Write("SpeedMultiplier", slider.Value.ToString(CultureInfo.InvariantCulture));
+    }
+
+    void RestoreEnabled()
+    {
+        bool any = false;
+        foreach (string key in (Preferences.Read("Enabled") ?? "").Split(','))
+        {
+            Feature f = features.FirstOrDefault(x => x.Key == key);
+            if (f == null || f.On || !f.Available || NotRestored.Contains(key)) continue;
+            f.On = true;
+            f.Row.On = true;
+            any = true;
+        }
+        if (any) sounds.Play(true);
     }
 
     void DisableAll()
@@ -1318,6 +1385,7 @@ class MainForm : Form
         }
         if (any) sounds.Play(false);
         SyncGame();
+        SaveEnabled();
     }
 
     void SetStatus(string key, Color color, params object[] args)
@@ -1345,6 +1413,7 @@ class MainForm : Form
                     return;
                 }
                 foreach (Feature f in features) f.Row.Available = f.Available;
+                if (rememberRow.On) RestoreEnabled();
             }
             game.Sync();
             SetStatus("status.connected", Theme.Good, features.Count(f => f.Available), features.Count);
@@ -1395,7 +1464,7 @@ class MainForm : Form
         }
 
         Size hintSize = TextRenderer.MeasureText(Loc.T("hint"), Theme.SubFont, Size.Empty, TextFormatFlags.NoPadding);
-        TextRenderer.DrawText(g, Loc.T("hint"), Theme.SubFont, new Point(Theme.S(20), Theme.S(634)), Theme.Faint, Theme.Back, TextFormatFlags.NoPadding);
+        TextRenderer.DrawText(g, Loc.T("hint"), Theme.SubFont, new Point(Theme.S(20), ClientSize.Height - Theme.S(26)), Theme.Faint, Theme.Back, TextFormatFlags.NoPadding);
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -1419,7 +1488,7 @@ class MainForm : Form
     // Renders the window with a few switches on, for checking the layout.
     public void SavePreview(string path)
     {
-        foreach (int i in new[] { 0, 1, 4, 10, 11 }) { features[i].Row.On = true; features[i].Row.SnapAnimation(); }
+        foreach (Feature f in features.Where(f => new[] { "god", "ammo", "filters", "speed", "noclip" }.Contains(f.Key))) { f.Row.On = true; f.Row.SnapAnimation(); }
         SetStatus("status.connected", Theme.Good, features.Count, features.Count);
         using (Bitmap bitmap = new Bitmap(Width, Height))
         {

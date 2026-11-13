@@ -8,7 +8,7 @@ static class Product
 {
     public const string Game = "Metro 2033 Redux", Header = "METRO 2033 REDUX", Id = "Metro2033ReduxTrainer";
     public const string SteamAppId = "286690", OtherSteamAppId = "287390";
-    public const string Version = "0.5", AssemblyVersion = "0.5.0.0";
+    public const string Version = "0.6", AssemblyVersion = "0.6.0.0";
     public const string AppName = Game + " Trainer";
 
     // A video only Last Light has, for copies that are not in a Steam library with a manifest.

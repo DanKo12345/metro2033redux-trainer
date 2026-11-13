@@ -80,7 +80,9 @@ static class Loc
         { "air", new[] { "Air pressure", "Давление воздуха", "Тиск повітря", "气压" } },
         { "air.sub", new[] { "Pneumatic guns and flamethrower", "«Тихарь», «Хельсинг», огнемёт", "Пневматична зброя і вогнемет", "气动武器和火焰喷射器" } },
         { "volt", new[] { "Volt Driver charge", "Заряд Volt Driver", "Заряд Volt Driver", "Volt Driver 电量" } },
-        { "volt.sub", new[] { "Battery does not drain", "Батарея не садится", "Батарея не сідає", "电池不会耗尽" } },
+        { "volt.sub", new[] { "The electric gun does not run down", "Электрическое оружие не разряжается", "Електрична зброя не розряджається", "电击枪不会没电" } },
+        { "battery", new[] { "Infinite battery", "Бесконечная батарея", "Безкінечна батарея", "无限电池" } },
+        { "battery.sub", new[] { "The flashlight does not run down", "Фонарик не садится", "Ліхтарик не сідає", "手电筒不会没电" } },
         { "freeze", new[] { "Freeze everyone", "Заморозка всех", "Заморозка всіх", "冻结所有人" } },
         { "freeze.sub", new[] { "NPCs and enemies stand still", "NPC и враги стоят на месте", "NPC і вороги стоять на місці", "NPC 和敌人停在原地" } },
         { "speed", new[] { "Fast movement", "Быстрое движение", "Швидкий рух", "快速移动" } },
@@ -90,6 +92,7 @@ static class Loc
 
         { "multiplier", new[] { "Multiplier", "Множитель", "Множник", "倍率" } },
         { "sound", new[] { "Sound", "Звук", "Звук", "声音" } },
+        { "remember", new[] { "Remember enabled", "Запоминать включённое", "Пам'ятати ввімкнене", "记住已开启的功能" } },
         { "topmost", new[] { "Always on top", "Поверх окон", "Поверх вікон", "窗口置顶" } },
         { "pos.save", new[] { "Save position", "Сохранить позицию", "Зберегти позицію", "保存位置" } },
         { "pos.save.sub", new[] { "Remembers where you stand", "Запомнить место игрока", "Запам'ятати місце гравця", "记住玩家当前位置" } },
