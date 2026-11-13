@@ -10,7 +10,7 @@ The trainer finds `metro.exe`, checks from the folder it runs in that it is Metr
 |---|---|---|
 | Engine debug flags | Infinite ammo, invisibility | `Catalog`, `Game.Sync` in `src/Trainer.cs` |
 | Engine setting | Fast movement (`g_player_speed_scale`) | `Game.Sync` |
-| Small code patches, restored on exit | Medkits, filters, gas mask, reload, recoil, air pressure, Volt Driver, freeze, money | `Catalog.Build` (signature, offset, bytes) |
+| Small code patches, restored on exit | Medkits, filters, gas mask, reload, recoil, air pressure, flashlight battery, Volt Driver, freeze, money | `Catalog.Build` (signature, offset, bytes) |
 | Code cave next to the game module | Noclip, position save and teleport; god mode, no reload, no spread and rapid fire for the player only | `Game.BuildMoveCave`, `Game.BuildGodCave`, `Game.BuildHookCave` |
 
 Military-grade ammo is also the game's money. The engine's ammo flag on its own would make the shop free too, so the ammo feature also masks the flag out of the two money functions, and money is a separate feature that patches those same functions.
@@ -27,7 +27,9 @@ The Windows APIs it uses on the game process are `OpenProcess`, `ReadProcessMemo
 
 The installer (`src/Setup.cs`) embeds the trainer, copies it to a folder the user picks (by default `%LOCALAPPDATA%\Programs\Metro 2033 Redux Trainer`), creates shortcuts and registers an uninstall entry under `HKCU`. No administrator rights are needed. To uninstall, `Uninstall.exe` copies itself to `%TEMP%` so it can remove the install folder, then deletes that copy.
 
-Settings (language, sound, always on top, hotkeys) are stored in `HKCU\Software\Metro2033ReduxTrainer`.
+With "Remember enabled" on, the trainer keeps the list of features that are on (and the speed multiplier) and switches them on again the next time it connects to the game. Freeze and noclip are never switched on by themselves, because they change how scripted scenes play out.
+
+Settings (language, sound, always on top, remembered features, hotkeys) are stored in `HKCU\Software\Metro2033ReduxTrainer`.
 
 ## Building
 
